@@ -1,0 +1,179 @@
+version: "2"
+services:
+  namenode:
+    tty: true
+    restart: on-failure
+    image: abc/spark-hive-setup:v1
+    hostname: namenode
+    command: ["hdfs", "namenode"]
+    ports:
+      - 9870:9870
+      - 9000:9000
+    env_file:
+      - ./conf/hadoop-config
+    environment:
+      ENSURE_NAMENODE_DIR: "/opt/hadoop/dfs/namenode"
+    volumes:
+      - ./container_data/hadoop/dfs/namenode:/opt/hadoop/dfs/namenode
+      - ./container_data/shared:/opt/shared
+      - ../etl-project:/opt/shared/etl-project
+  datanode:
+    tty: true
+    restart: on-failure
+    image: abc/spark-hive-setup:v1
+    command: ["hdfs", "datanode"]
+    ports:
+      - 9864:9864
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870"
+    env_file:
+      - ./conf/hadoop-config
+    volumes:
+      - ./container_data/hadoop/dfs/data:/opt/hadoop/dfs/data
+      - ./container_data/shared:/opt/shared
+      - ../etl-project:/opt/shared/etl-project
+  resourcemanager:
+    tty: true
+    restart: on-failure
+    image: abc/spark-hive-setup:v1
+    hostname: resourcemanager
+    command: ["yarn", "resourcemanager"]
+    ports:
+        - 8088:8088
+    env_file:
+      - ./conf/hadoop-config
+    volumes:
+      - ./test.sh:/opt/test.sh
+    environment:
+      SERVICE_PRECONDITION: "namenode:9000 namenode:9870 datanode:9864"
+  nodemanager:
+    tty: true
+    restart: on-failure
+    image: abc/spark-hive-setup:v1
+    command: ["yarn", "nodemanager"]
+    ports:
+      - 8042:8042
+    env_file:
+      - ./conf/hadoop-config
+    environment:
+      SERVICE_PRECONDITION: "namenode:9000 namenode:9870 datanode:9864 resourcemanager:8088"
+  spark-master:
+    tty: true
+    restart: on-failure
+    image: abc/spark-hive-setup:v1
+    container_name: spark-master
+    build: .
+    command: ["start-master.sh", "-p", "7077"]
+    depends_on:
+      - namenode
+      - datanode
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080" ]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    volumes:
+      - ./conf/hive-site.xml:/opt/spark-3.3.2-bin-hadoop3/conf/hive-site.xml
+      - ./conf/spark/log4j.properties:/opt/spark-3.3.2-bin-hadoop3/conf/log4j.properties
+      - ./table_data:/shared_data/table_data
+      - ./container_data/shared:/opt/shared
+      - ../etl-project:/opt/shared/etl-project
+    env_file:
+      - ./conf/.env.spark
+    ports:
+      - '9090:8080'
+      - '7077:7077'
+      - '4040:4040'
+    # environment:
+    #   - DB_HOST=host.docker.internal
+  spark-worker-1:
+    tty: true
+    restart: on-failure
+    image: abc/spark-hive-setup:v1
+    container_name: spark-worker-1
+    command: ["start-worker.sh","spark://spark-master:7077"]
+    ports:
+      - 8081:8081
+    depends_on:
+      - spark-master
+    env_file:
+      - ./conf/.env.spark
+    volumes:
+      - ./conf/hive-site.xml:/opt/spark-3.3.2-bin-hadoop3/conf/hive-site.xml
+      - ./conf/spark/log4j.properties:/opt/spark-3.3.2-bin-hadoop3/conf/log4j.properties
+      - ./table_data:/shared_data/table_data
+      - ./container_data/shared:/opt/shared
+      - ../etl-project:/opt/shared/etl-project
+  spark-worker-2:
+    tty: true
+    restart: on-failure
+    image: abc/spark-hive-setup:v1
+    container_name: spark-worker-2
+    command: ["start-worker.sh","spark://spark-master:7077"]
+    ports:
+      - 8082:8081
+    depends_on:
+      - spark-master
+    env_file:
+      - ./conf/.env.spark
+    volumes:
+      - ./conf/hive-site.xml:/opt/spark-3.3.2-bin-hadoop3/conf/hive-site.xml
+      - ./conf/spark/log4j.properties:/opt/spark-3.3.2-bin-hadoop3/conf/log4j.properties
+      - ./table_data:/shared_data/table_data
+      - ./container_data/shared:/opt/shared
+      - ../etl-project:/opt/shared/etl-project
+  postgresql:
+    tty: true
+    restart: on-failure
+    image: abc/postgresql-setup:v1
+    container_name: postgresql
+    hostname: psqlhms
+    environment:
+      POSTGRES_PASSWORD: 'mysecret'
+    ports:
+      - "5432:5432"
+    volumes:
+     - ./container_data/postgres:/var/lib/postgresql
+  hive-server:
+    tty: true
+    restart: on-failure
+    image: abc/spark-hive-setup:v1
+    container_name: hive-server
+    env_file:
+      - ./conf/hadoop-hive.env
+    environment:
+      HIVE_CORE_CONF_javax_jdo_option_ConnectionURL: "jdbc:postgresql://psqlhms:5432/metastore"
+      SERVICE_PRECONDITION: "hive-metastore:9083"
+    command: /opt/apache-hive-3.1.3-bin/bin/hive --service metastore
+    ports:
+      - "10000:10000"
+    volumes:
+      - ./table_data:/shared_data/table_data
+      - ./container_data/shared:/opt/shared
+      - ../etl-project:/opt/shared/etl-project
+    links:
+      - "postgresql:postgresql"
+    depends_on:
+      - hive-metastore
+  hive-metastore:
+    tty: true
+    image: abc/spark-hive-setup:v1
+    env_file:
+      - ./conf/hadoop-hive.env
+    command: schematool -dbType postgres -initSchema
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870 postgresql:5432"
+    ports:
+      - "9083:9083"
+  livy-server:
+    tty: true
+    image: abc/spark-hive-setup:v1
+    command: ["sh", "-c", "/opt/livy-0.8.0//bin/livy-server"]
+    ports:
+      - '8998:8998'
+    volumes:
+      - ../etl-project:/opt/shared/etl-project
+    depends_on:
+      - spark-master
+      - spark-worker-1
+      - spark-worker-2
