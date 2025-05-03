@@ -1,4 +1,4 @@
-FROM artifactdv.us.platforms.dev/docker-virtual/apache/hadoop:3
+FROM apache/hadoop:3
 USER root
 ENV JAVA_HOME="/usr/lib/jvm/jre/"
 ENV HADOOP_HOME="/opt/hadoop"
