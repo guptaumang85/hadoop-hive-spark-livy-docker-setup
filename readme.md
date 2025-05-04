@@ -20,6 +20,10 @@ To deploy the cluster, run:
 make build
 ```
 
+```sh
+docker-compose up -d
+```
+
 ## Access interfaces with the following URL
 
 ### Hadoop
